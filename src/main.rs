@@ -306,92 +306,137 @@ async fn mqtt_listener(
 
     // Run MQTT operations in a blocking task since paho-mqtt is not async
     tokio::task::spawn_blocking(move || -> Result<()> {
-        debug!("Creating MQTT client for listener");
-        // Create MQTT client
-        let create_opts = paho_mqtt::CreateOptionsBuilder::new()
-            .server_uri(&args.mqtt_host)
-            .client_id("theme-sender-listener")
-            .finalize();
+        let mut reconnect_delay = 1u64; // Start with 1 second
+        const MAX_RECONNECT_DELAY: u64 = 60; // Cap at 60 seconds
 
-        let client = paho_mqtt::Client::new(create_opts).context("Failed to create MQTT client")?;
-
-        // Set up connection options
-        debug!("Configuring MQTT connection for sending");
-        let mut conn_opts_builder = paho_mqtt::ConnectOptionsBuilder::new();
-        conn_opts_builder.keep_alive_interval(StdDuration::from_secs(20));
-
-        if let (Some(username), Some(password)) = (&args.mqtt_username, &args.mqtt_password) {
-            debug!("Using MQTT authentication for sending");
-            conn_opts_builder.user_name(username).password(password);
-        }
-
-        let conn_opts = conn_opts_builder.finalize();
-
-        // Start consumer before connecting
-        let rx = client.start_consuming();
-
-        // Connect
-        info!("Connecting MQTT listener to broker");
-        client
-            .connect(conn_opts)
-            .context("Failed to connect to MQTT broker")?;
-
-        // Subscribe to override topic
-        debug!(
-            "Subscribing to override topic: {}",
-            args.mqtt_override_topic
-        );
-        client
-            .subscribe(&args.mqtt_override_topic, 1)
-            .context("Failed to subscribe to override topic")?;
-
-        // Subscribe to revert topic
-        debug!("Subscribing to revert topic: {}", args.mqtt_revert_topic);
-        client
-            .subscribe(&args.mqtt_revert_topic, 1)
-            .context("Failed to subscribe to revert topic")?;
-
-        info!(
-            "✓ Subscribed to {} and {}",
-            args.mqtt_override_topic, args.mqtt_revert_topic
-        );
-
-        // Listen for messages
-        info!("MQTT listener ready, waiting for messages");
         loop {
-            // Use recv with timeout to avoid blocking indefinitely
-            match rx.recv_timeout(StdDuration::from_millis(100)) {
-                Ok(Some(msg)) => {
-                    let topic = msg.topic();
-                    let payload = String::from_utf8_lossy(msg.payload()).to_string();
+            debug!("Creating MQTT client for listener");
+            // Create MQTT client
+            let create_opts = paho_mqtt::CreateOptionsBuilder::new()
+                .server_uri(&args.mqtt_host)
+                .client_id("theme-sender-listener")
+                .finalize();
 
-                    debug!(
-                        "Received MQTT message on topic '{}' with payload '{}'",
-                        topic, payload
-                    );
+            let client = match paho_mqtt::Client::new(create_opts) {
+                Ok(c) => c,
+                Err(e) => {
+                    error!("Failed to create MQTT client: {}", e);
+                    std::thread::sleep(StdDuration::from_secs(reconnect_delay));
+                    reconnect_delay = (reconnect_delay * 2).min(MAX_RECONNECT_DELAY);
+                    continue;
+                }
+            };
 
-                    let override_msg = if topic == args.mqtt_revert_topic {
-                        OverrideMessage::Revert
-                    } else {
-                        OverrideMessage::SetTheme(payload.clone())
-                    };
+            // Set up connection options with auto-reconnect
+            debug!("Configuring MQTT connection for listener");
+            let mut conn_opts_builder = paho_mqtt::ConnectOptionsBuilder::new();
+            conn_opts_builder
+                .keep_alive_interval(StdDuration::from_secs(20))
+                .clean_session(false)
+                .automatic_reconnect(StdDuration::from_secs(1), StdDuration::from_secs(60));
 
-                    debug!("Parsed as: {:?}", override_msg);
+            if let (Some(username), Some(password)) = (&args.mqtt_username, &args.mqtt_password) {
+                debug!("Using MQTT authentication for listener");
+                conn_opts_builder.user_name(username).password(password);
+            }
 
-                    // Use blocking_send since we're in a blocking context
-                    if let Err(e) = override_tx.blocking_send(override_msg) {
-                        error!("Failed to send override message to main loop: {}", e);
+            let conn_opts = conn_opts_builder.finalize();
+
+            // Start consumer before connecting
+            let rx = client.start_consuming();
+
+            // Connect
+            info!("Connecting MQTT listener to broker");
+            if let Err(e) = client.connect(conn_opts) {
+                error!("Failed to connect to MQTT broker: {}", e);
+                std::thread::sleep(StdDuration::from_secs(reconnect_delay));
+                reconnect_delay = (reconnect_delay * 2).min(MAX_RECONNECT_DELAY);
+                continue;
+            }
+
+            // Subscribe to override topic
+            debug!(
+                "Subscribing to override topic: {}",
+                args.mqtt_override_topic
+            );
+            if let Err(e) = client.subscribe(&args.mqtt_override_topic, 1) {
+                error!("Failed to subscribe to override topic: {}", e);
+                std::thread::sleep(StdDuration::from_secs(reconnect_delay));
+                reconnect_delay = (reconnect_delay * 2).min(MAX_RECONNECT_DELAY);
+                continue;
+            }
+
+            // Subscribe to revert topic
+            debug!("Subscribing to revert topic: {}", args.mqtt_revert_topic);
+            if let Err(e) = client.subscribe(&args.mqtt_revert_topic, 1) {
+                error!("Failed to subscribe to revert topic: {}", e);
+                std::thread::sleep(StdDuration::from_secs(reconnect_delay));
+                reconnect_delay = (reconnect_delay * 2).min(MAX_RECONNECT_DELAY);
+                continue;
+            }
+
+            info!(
+                "✓ Subscribed to {} and {}",
+                args.mqtt_override_topic, args.mqtt_revert_topic
+            );
+
+            // Reset reconnect delay on successful connection
+            reconnect_delay = 1;
+
+            // Listen for messages
+            info!("MQTT listener ready, waiting for messages");
+            let connection_lost;
+            loop {
+                // Use recv with timeout to avoid blocking indefinitely
+                match rx.recv_timeout(StdDuration::from_millis(100)) {
+                    Ok(Some(msg)) => {
+                        let topic = msg.topic();
+                        let payload = String::from_utf8_lossy(msg.payload()).to_string();
+
+                        debug!(
+                            "Received MQTT message on topic '{}' with payload '{}'",
+                            topic, payload
+                        );
+
+                        let override_msg = if topic == args.mqtt_revert_topic {
+                            OverrideMessage::Revert
+                        } else {
+                            OverrideMessage::SetTheme(payload.clone())
+                        };
+
+                        debug!("Parsed as: {:?}", override_msg);
+
+                        // Use blocking_send since we're in a blocking context
+                        if let Err(e) = override_tx.blocking_send(override_msg) {
+                            error!("Failed to send override message to main loop: {}", e);
+                            return Err(anyhow::anyhow!("Override channel closed"));
+                        }
+                        debug!("Successfully forwarded message to main loop");
+                    }
+                    Ok(None) => {
+                        debug!("Connection lost, attempting to reconnect...");
+                        connection_lost = true;
                         break;
                     }
-                    debug!("Successfully forwarded message to main loop");
-                }
-                Ok(None) => {
-                    debug!("Received None from MQTT receiver");
-                }
-                Err(_) => {
-                    // Timeout is normal, just continue
+                    Err(_) => {
+                        // Timeout is normal, check connection status
+                        if !client.is_connected() {
+                            error!("MQTT connection lost, attempting to reconnect...");
+                            connection_lost = true;
+                            break;
+                        }
+                    }
                 }
             }
+
+            if connection_lost {
+                error!("Connection lost, reconnecting in {} seconds...", reconnect_delay);
+                std::thread::sleep(StdDuration::from_secs(reconnect_delay));
+                reconnect_delay = (reconnect_delay * 2).min(MAX_RECONNECT_DELAY);
+                continue;
+            }
+
+            break;
         }
 
         Ok(())
@@ -417,6 +462,41 @@ async fn send_theme_update(args: &ThemeMqttArgs, theme: &ThemeType) -> Result<()
     );
     debug!("Theme payload: {:?}", payload);
 
+    let payload_json = serde_json::to_string(&payload)?;
+    
+    // Retry logic with exponential backoff
+    let mut retry_delay = 1u64;
+    const MAX_RETRY_DELAY: u64 = 30;
+    const MAX_RETRIES: u32 = 5;
+    
+    for attempt in 1..=MAX_RETRIES {
+        match try_send_mqtt(args, &payload_json, attempt).await {
+            Ok(()) => {
+                info!("✓ Theme update sent successfully");
+                return Ok(());
+            }
+            Err(e) if attempt < MAX_RETRIES => {
+                error!(
+                    "Failed to send theme update (attempt {}/{}): {}",
+                    attempt, MAX_RETRIES, e
+                );
+                debug!("Retrying in {} seconds...", retry_delay);
+                tokio::time::sleep(StdDuration::from_secs(retry_delay)).await;
+                retry_delay = (retry_delay * 2).min(MAX_RETRY_DELAY);
+            }
+            Err(e) => {
+                error!("Failed to send theme update after {} attempts: {}", MAX_RETRIES, e);
+                return Err(e);
+            }
+        }
+    }
+    
+    Err(anyhow::anyhow!("Failed to send theme update after all retries"))
+}
+
+async fn try_send_mqtt(args: &ThemeMqttArgs, payload_json: &str, attempt: u32) -> Result<()> {
+    debug!("Attempting to send MQTT message (attempt {})", attempt);
+    
     // Create MQTT client
     let create_opts = paho_mqtt::CreateOptionsBuilder::new()
         .server_uri(&args.mqtt_host)
@@ -425,11 +505,14 @@ async fn send_theme_update(args: &ThemeMqttArgs, theme: &ThemeType) -> Result<()
 
     let client = paho_mqtt::Client::new(create_opts).context("Failed to create MQTT client")?;
 
-    // Set up connection options
+    // Set up connection options with automatic reconnect
     let mut conn_opts_builder = paho_mqtt::ConnectOptionsBuilder::new();
-    conn_opts_builder.keep_alive_interval(StdDuration::from_secs(20));
+    conn_opts_builder
+        .keep_alive_interval(StdDuration::from_secs(20))
+        .automatic_reconnect(StdDuration::from_secs(1), StdDuration::from_secs(30));
 
     if let (Some(username), Some(password)) = (&args.mqtt_username, &args.mqtt_password) {
+        debug!("Using MQTT authentication");
         conn_opts_builder.user_name(username).password(password);
     }
 
@@ -441,7 +524,6 @@ async fn send_theme_update(args: &ThemeMqttArgs, theme: &ThemeType) -> Result<()
         .context("Failed to connect to MQTT broker")?;
 
     // Publish message
-    let payload_json = serde_json::to_string(&payload)?;
     debug!("Publishing to topic {}: {}", args.mqtt_topic, payload_json);
     let msg = paho_mqtt::Message::new(&args.mqtt_topic, payload_json, 1);
     client.publish(msg).context("Failed to publish message")?;
@@ -452,7 +534,6 @@ async fn send_theme_update(args: &ThemeMqttArgs, theme: &ThemeType) -> Result<()
         .disconnect(None)
         .context("Failed to disconnect from MQTT broker")?;
 
-    info!("✓ Theme update sent successfully");
     Ok(())
 }
 

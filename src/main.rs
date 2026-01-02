@@ -1,18 +1,18 @@
+use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use clap::Parser;
 use serde::{Deserialize, Serialize};
-use anyhow::{Context, Result};
 use std::time::Duration as StdDuration;
-use sunrise::{SolarDay, SolarEvent, DawnType, Coordinates};
+use sunrise::{Coordinates, DawnType, SolarDay, SolarEvent};
 use tokio::sync::mpsc;
-use tracing::{info, error, debug, instrument};
+use tracing::{debug, error, info, instrument};
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize tracing
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
         .init();
 
@@ -28,10 +28,13 @@ async fn main() -> Result<()> {
     // Get location
     info!("Fetching geolocation...");
     let location = get_location().await?;
-    info!("Location: lat={:.4}, lon={:.4}", location.latitude, location.longitude);
+    info!(
+        "Location: lat={:.4}, lon={:.4}",
+        location.latitude, location.longitude
+    );
 
-    let coordinates = Coordinates::new(location.latitude, location.longitude)
-        .context("Invalid coordinates")?;
+    let coordinates =
+        Coordinates::new(location.latitude, location.longitude).context("Invalid coordinates")?;
 
     // Configure how often to publish the theme (in seconds)
     let publish_interval = args.publish_interval_secs;
@@ -57,26 +60,51 @@ async fn main() -> Result<()> {
         let solar_day = SolarDay::new(coordinates, date);
 
         let mut events = vec![
-            (ThemeType::AstronomicalDawn, solar_day.event_time(SolarEvent::Dawn(DawnType::Astronomical))),
-            (ThemeType::NauticalDawn, solar_day.event_time(SolarEvent::Dawn(DawnType::Nautical))),
-            (ThemeType::CivilDawn, solar_day.event_time(SolarEvent::Dawn(DawnType::Civil))),
-            (ThemeType::Sunrise, solar_day.event_time(SolarEvent::Sunrise)),
+            (
+                ThemeType::AstronomicalDawn,
+                solar_day.event_time(SolarEvent::Dawn(DawnType::Astronomical)),
+            ),
+            (
+                ThemeType::NauticalDawn,
+                solar_day.event_time(SolarEvent::Dawn(DawnType::Nautical)),
+            ),
+            (
+                ThemeType::CivilDawn,
+                solar_day.event_time(SolarEvent::Dawn(DawnType::Civil)),
+            ),
+            (
+                ThemeType::Sunrise,
+                solar_day.event_time(SolarEvent::Sunrise),
+            ),
             (ThemeType::Day, solar_day.event_time(SolarEvent::Sunset)),
-            (ThemeType::CivilDusk, solar_day.event_time(SolarEvent::Dusk(DawnType::Civil))),
-            (ThemeType::NauticalDusk, solar_day.event_time(SolarEvent::Dusk(DawnType::Nautical))),
-            (ThemeType::AstronomicalDusk, solar_day.event_time(SolarEvent::Dusk(DawnType::Astronomical))),
+            (
+                ThemeType::CivilDusk,
+                solar_day.event_time(SolarEvent::Dusk(DawnType::Civil)),
+            ),
+            (
+                ThemeType::NauticalDusk,
+                solar_day.event_time(SolarEvent::Dusk(DawnType::Nautical)),
+            ),
+            (
+                ThemeType::AstronomicalDusk,
+                solar_day.event_time(SolarEvent::Dusk(DawnType::Astronomical)),
+            ),
         ];
 
         events.sort_by_key(|(_, time)| *time);
 
         // Find current theme (the last event that has passed)
-        let current_theme = events.iter()
+        let current_theme = events
+            .iter()
             .rev()
             .find(|(_, time)| *time <= now)
             .map(|(theme, _)| theme.clone())
             .unwrap_or(ThemeType::Night);
 
-        info!("🌟 Publishing current theme on startup: {:?}", current_theme);
+        info!(
+            "🌟 Publishing current theme on startup: {:?}",
+            current_theme
+        );
         send_theme_update(&args.mqtt, &current_theme).await?;
         Some(current_theme.clone())
     };
@@ -94,15 +122,41 @@ async fn main() -> Result<()> {
         let solar_day = SolarDay::new(coordinates, date);
 
         let mut events = vec![
-            (ThemeType::AstronomicalDawn, solar_day.event_time(SolarEvent::Dawn(DawnType::Astronomical))),
-            (ThemeType::NauticalDawn, solar_day.event_time(SolarEvent::Dawn(DawnType::Nautical))),
-            (ThemeType::CivilDawn, solar_day.event_time(SolarEvent::Dawn(DawnType::Civil))),
-            (ThemeType::Sunrise, solar_day.event_time(SolarEvent::Sunrise)),
+            (
+                ThemeType::AstronomicalDawn,
+                solar_day.event_time(SolarEvent::Dawn(DawnType::Astronomical)),
+            ),
+            (
+                ThemeType::NauticalDawn,
+                solar_day.event_time(SolarEvent::Dawn(DawnType::Nautical)),
+            ),
+            (
+                ThemeType::CivilDawn,
+                solar_day.event_time(SolarEvent::Dawn(DawnType::Civil)),
+            ),
+            (
+                ThemeType::Sunrise,
+                solar_day.event_time(SolarEvent::Sunrise),
+            ),
             (ThemeType::Day, solar_day.event_time(SolarEvent::Sunset)),
-            (ThemeType::CivilDusk, solar_day.event_time(SolarEvent::Dusk(DawnType::Civil))),
-            (ThemeType::NauticalDusk, solar_day.event_time(SolarEvent::Dusk(DawnType::Nautical))),
-            (ThemeType::AstronomicalDusk, solar_day.event_time(SolarEvent::Dusk(DawnType::Astronomical))),
-            (ThemeType::Night, DateTime::from_timestamp(now.timestamp() + 86400, 0).unwrap().with_timezone(&Utc)), // Next day midnight
+            (
+                ThemeType::CivilDusk,
+                solar_day.event_time(SolarEvent::Dusk(DawnType::Civil)),
+            ),
+            (
+                ThemeType::NauticalDusk,
+                solar_day.event_time(SolarEvent::Dusk(DawnType::Nautical)),
+            ),
+            (
+                ThemeType::AstronomicalDusk,
+                solar_day.event_time(SolarEvent::Dusk(DawnType::Astronomical)),
+            ),
+            (
+                ThemeType::Night,
+                DateTime::from_timestamp(now.timestamp() + 86400, 0)
+                    .unwrap()
+                    .with_timezone(&Utc),
+            ), // Next day midnight
         ];
 
         // Sort by time
@@ -126,12 +180,12 @@ async fn main() -> Result<()> {
                         OverrideMessage::SetTheme(theme) => {
                             info!("🎭 Received custom theme override: {}", theme);
                             debug!("Setting custom_override to: {}", theme);
-                            
+
                             // Check if this is actually a change
                             if custom_override.as_ref() != Some(&theme) {
                                 custom_override = Some(theme.clone());
                                 theme_changed = true;
-                                
+
                                 // Publish immediately
                                 let new_theme = ThemeType::Custom(theme);
                                 info!("🎨 Publishing new custom theme immediately");
@@ -144,13 +198,14 @@ async fn main() -> Result<()> {
                         OverrideMessage::Revert => {
                             info!("🔄 Received revert message, clearing custom override");
                             debug!("Clearing custom_override");
-                            
+
                             if custom_override.is_some() {
                                 custom_override = None;
                                 theme_changed = true;
-                                
+
                                 // Publish current solar theme immediately
-                                let solar_theme = events.iter()
+                                let solar_theme = events
+                                    .iter()
                                     .rev()
                                     .find(|(_, time)| *time <= now)
                                     .map(|(theme, _)| theme.clone())
@@ -174,7 +229,8 @@ async fn main() -> Result<()> {
         }
 
         // Determine what theme to use
-        let solar_theme = events.iter()
+        let solar_theme = events
+            .iter()
             .rev()
             .find(|(_, time)| *time <= now)
             .map(|(theme, _)| theme.clone())
@@ -185,7 +241,10 @@ async fn main() -> Result<()> {
         if custom_override.is_some() {
             if let Some(ref last_solar) = last_solar_theme {
                 if last_solar != &solar_theme {
-                    info!("☀️  Solar theme changed from {:?} to {:?}, clearing custom override", last_solar, solar_theme);
+                    info!(
+                        "☀️  Solar theme changed from {:?} to {:?}, clearing custom override",
+                        last_solar, solar_theme
+                    );
                     custom_override = None;
                 }
             }
@@ -193,7 +252,10 @@ async fn main() -> Result<()> {
 
         // Update last solar theme
         if last_solar_theme.as_ref() != Some(&solar_theme) {
-            debug!("Solar theme updated from {:?} to {:?}", last_solar_theme, solar_theme);
+            debug!(
+                "Solar theme updated from {:?} to {:?}",
+                last_solar_theme, solar_theme
+            );
             last_solar_theme = Some(solar_theme.clone());
         }
 
@@ -214,12 +276,14 @@ async fn main() -> Result<()> {
             info!("♻️  Republishing current theme: {:?}", current_theme);
             send_theme_update(&args.mqtt, &current_theme).await?;
         }
-        
+
         // Wait for the configured interval before next check
         // If we just published due to an override change, skip the sleep
         // and immediately loop to check for more messages
         if theme_changed {
-            debug!("Theme was changed by override/revert, continuing immediately to check for more messages");
+            debug!(
+                "Theme was changed by override/revert, continuing immediately to check for more messages"
+            );
             // Don't sleep, just continue the loop
         } else {
             debug!("Waiting {} seconds until next check...", publish_interval);
@@ -235,94 +299,108 @@ enum OverrideMessage {
 }
 
 #[instrument(skip(override_tx))]
-async fn mqtt_listener(args: ThemeMqttArgs, override_tx: mpsc::Sender<OverrideMessage>) -> Result<()> {
+async fn mqtt_listener(
+    args: ThemeMqttArgs,
+    override_tx: mpsc::Sender<OverrideMessage>,
+) -> Result<()> {
     info!("Starting MQTT listener for custom theme overrides");
 
     // Run MQTT operations in a blocking task since paho-mqtt is not async
     tokio::task::spawn_blocking(move || -> Result<()> {
         debug!("Creating MQTT client for listener");
         // Create MQTT client
-    let create_opts = paho_mqtt::CreateOptionsBuilder::new()
-        .server_uri(&args.mqtt_host)
-        .client_id("theme-sender-listener")
-        .finalize();
+        let create_opts = paho_mqtt::CreateOptionsBuilder::new()
+            .server_uri(&args.mqtt_host)
+            .client_id("theme-sender-listener")
+            .finalize();
 
-    let client = paho_mqtt::Client::new(create_opts)
-        .context("Failed to create MQTT client")?;
-    
-    // Set up connection options
-    debug!("Configuring MQTT connection for sending");
-    let mut conn_opts_builder = paho_mqtt::ConnectOptionsBuilder::new();
-    conn_opts_builder.keep_alive_interval(StdDuration::from_secs(20));
-    
-    if let (Some(username), Some(password)) = (&args.mqtt_username, &args.mqtt_password) {
-        debug!("Using MQTT authentication for sending");
-        conn_opts_builder.user_name(username).password(password);
-    }
+        let client = paho_mqtt::Client::new(create_opts).context("Failed to create MQTT client")?;
 
-    let conn_opts = conn_opts_builder.finalize();
+        // Set up connection options
+        debug!("Configuring MQTT connection for sending");
+        let mut conn_opts_builder = paho_mqtt::ConnectOptionsBuilder::new();
+        conn_opts_builder.keep_alive_interval(StdDuration::from_secs(20));
 
-    // Start consumer before connecting
-    let rx = client.start_consuming();
+        if let (Some(username), Some(password)) = (&args.mqtt_username, &args.mqtt_password) {
+            debug!("Using MQTT authentication for sending");
+            conn_opts_builder.user_name(username).password(password);
+        }
 
-    // Connect
-    info!("Connecting MQTT listener to broker");
-    client.connect(conn_opts)
-        .context("Failed to connect to MQTT broker")?;
+        let conn_opts = conn_opts_builder.finalize();
 
-    // Subscribe to override topic
-    debug!("Subscribing to override topic: {}", args.mqtt_override_topic);
-    client.subscribe(&args.mqtt_override_topic, 1)
-        .context("Failed to subscribe to override topic")?;
+        // Start consumer before connecting
+        let rx = client.start_consuming();
 
-    // Subscribe to revert topic
-    debug!("Subscribing to revert topic: {}", args.mqtt_revert_topic);
-    client.subscribe(&args.mqtt_revert_topic, 1)
-        .context("Failed to subscribe to revert topic")?;
+        // Connect
+        info!("Connecting MQTT listener to broker");
+        client
+            .connect(conn_opts)
+            .context("Failed to connect to MQTT broker")?;
 
-    info!("✓ Subscribed to {} and {}", args.mqtt_override_topic, args.mqtt_revert_topic);
+        // Subscribe to override topic
+        debug!(
+            "Subscribing to override topic: {}",
+            args.mqtt_override_topic
+        );
+        client
+            .subscribe(&args.mqtt_override_topic, 1)
+            .context("Failed to subscribe to override topic")?;
 
-    // Listen for messages
-    info!("MQTT listener ready, waiting for messages");
-    loop {
-        // Use recv with timeout to avoid blocking indefinitely
-        match rx.recv_timeout(StdDuration::from_millis(100)) {
-            Ok(Some(msg)) => {
-                let topic = msg.topic();
-                let payload = String::from_utf8_lossy(msg.payload()).to_string();
+        // Subscribe to revert topic
+        debug!("Subscribing to revert topic: {}", args.mqtt_revert_topic);
+        client
+            .subscribe(&args.mqtt_revert_topic, 1)
+            .context("Failed to subscribe to revert topic")?;
 
-                debug!("Received MQTT message on topic '{}' with payload '{}'", topic, payload);
+        info!(
+            "✓ Subscribed to {} and {}",
+            args.mqtt_override_topic, args.mqtt_revert_topic
+        );
 
-                let override_msg = if topic == args.mqtt_revert_topic {
-                    OverrideMessage::Revert
-                } else {
-                    OverrideMessage::SetTheme(payload.clone())
-                };
+        // Listen for messages
+        info!("MQTT listener ready, waiting for messages");
+        loop {
+            // Use recv with timeout to avoid blocking indefinitely
+            match rx.recv_timeout(StdDuration::from_millis(100)) {
+                Ok(Some(msg)) => {
+                    let topic = msg.topic();
+                    let payload = String::from_utf8_lossy(msg.payload()).to_string();
 
-                debug!("Parsed as: {:?}", override_msg);
+                    debug!(
+                        "Received MQTT message on topic '{}' with payload '{}'",
+                        topic, payload
+                    );
 
-                // Use blocking_send since we're in a blocking context
-                if let Err(e) = override_tx.blocking_send(override_msg) {
-                    error!("Failed to send override message to main loop: {}", e);
-                    break;
+                    let override_msg = if topic == args.mqtt_revert_topic {
+                        OverrideMessage::Revert
+                    } else {
+                        OverrideMessage::SetTheme(payload.clone())
+                    };
+
+                    debug!("Parsed as: {:?}", override_msg);
+
+                    // Use blocking_send since we're in a blocking context
+                    if let Err(e) = override_tx.blocking_send(override_msg) {
+                        error!("Failed to send override message to main loop: {}", e);
+                        break;
+                    }
+                    debug!("Successfully forwarded message to main loop");
                 }
-                debug!("Successfully forwarded message to main loop");
-            }
-            Ok(None) => {
-                debug!("Received None from MQTT receiver");
-            }
-            Err(_) => {
-                // Timeout is normal, just continue
+                Ok(None) => {
+                    debug!("Received None from MQTT receiver");
+                }
+                Err(_) => {
+                    // Timeout is normal, just continue
+                }
             }
         }
-    }
-    
-    Ok(())
+
+        Ok(())
     })
     .await
     .context("MQTT listener task panicked")?
     .context("MQTT listener error")?;
-    
+
     Ok(())
 }
 
@@ -332,45 +410,49 @@ async fn send_theme_update(args: &ThemeMqttArgs, theme: &ThemeType) -> Result<()
         theme: theme.to_theme_string(),
         data: Utc::now(),
     };
-    
-    info!("🎨 Sending theme update: {} ({})", payload.theme, theme.to_description());
+
+    info!(
+        "🎨 Sending theme update: {} ({})",
+        payload.theme,
+        theme.to_description()
+    );
     debug!("Theme payload: {:?}", payload);
-    
+
     // Create MQTT client
     let create_opts = paho_mqtt::CreateOptionsBuilder::new()
         .server_uri(&args.mqtt_host)
         .client_id("theme-sender")
         .finalize();
-    
-    let client = paho_mqtt::Client::new(create_opts)
-        .context("Failed to create MQTT client")?;
-    
+
+    let client = paho_mqtt::Client::new(create_opts).context("Failed to create MQTT client")?;
+
     // Set up connection options
     let mut conn_opts_builder = paho_mqtt::ConnectOptionsBuilder::new();
     conn_opts_builder.keep_alive_interval(StdDuration::from_secs(20));
-    
+
     if let (Some(username), Some(password)) = (&args.mqtt_username, &args.mqtt_password) {
         conn_opts_builder.user_name(username).password(password);
     }
-    
+
     let conn_opts = conn_opts_builder.finalize();
-    
+
     // Connect
-    client.connect(conn_opts)
+    client
+        .connect(conn_opts)
         .context("Failed to connect to MQTT broker")?;
-    
+
     // Publish message
     let payload_json = serde_json::to_string(&payload)?;
     debug!("Publishing to topic {}: {}", args.mqtt_topic, payload_json);
     let msg = paho_mqtt::Message::new(&args.mqtt_topic, payload_json, 1);
-    client.publish(msg)
-        .context("Failed to publish message")?;
-    
+    client.publish(msg).context("Failed to publish message")?;
+
     // Disconnect
     debug!("Disconnecting from MQTT broker");
-    client.disconnect(None)
+    client
+        .disconnect(None)
         .context("Failed to disconnect from MQTT broker")?;
-    
+
     info!("✓ Theme update sent successfully");
     Ok(())
 }
@@ -404,7 +486,7 @@ impl ThemeType {
             ThemeType::Custom(theme) => theme.clone(),
         }
     }
-    
+
     fn to_description(&self) -> &'static str {
         match self {
             ThemeType::Night => "Full night - stars visible",
@@ -424,14 +506,14 @@ impl ThemeType {
 #[derive(Debug, Serialize, Clone)]
 struct ThemePayload {
     theme: String,
-    data: DateTime<Utc>
+    data: DateTime<Utc>,
 }
 
 #[derive(Debug, Parser)]
 struct Args {
     #[command(flatten)]
     mqtt: ThemeMqttArgs,
-    
+
     #[arg(long, default_value = "300", env = "PUBLISH_INTERVAL_SECS")]
     publish_interval_secs: u64,
 }
@@ -447,13 +529,21 @@ struct ThemeMqttArgs {
     #[arg(long, env = "MQTT_PASSWORD")]
     mqtt_password: Option<String>,
 
-    #[arg(long, default_value="neiam/sync/theme", env = "MQTT_TOPIC")]
+    #[arg(long, default_value = "neiam/sync/theme", env = "MQTT_TOPIC")]
     mqtt_topic: String,
-    
-    #[arg(long, default_value="neiam/sync/theme/override", env = "MQTT_OVERRIDE_TOPIC")]
+
+    #[arg(
+        long,
+        default_value = "neiam/sync/theme/override",
+        env = "MQTT_OVERRIDE_TOPIC"
+    )]
     mqtt_override_topic: String,
-    
-    #[arg(long, default_value="neiam/sync/theme/revert", env = "MQTT_REVERT_TOPIC")]
+
+    #[arg(
+        long,
+        default_value = "neiam/sync/theme/revert",
+        env = "MQTT_REVERT_TOPIC"
+    )]
     mqtt_revert_topic: String,
 }
 
@@ -480,8 +570,11 @@ async fn get_location() -> Result<Location> {
         .json()
         .await
         .context("Failed to parse geolocation response")?;
-    debug!("Received location: lat={}, lon={}", response.lat, response.lon);
-    
+    debug!(
+        "Received location: lat={}, lon={}",
+        response.lat, response.lon
+    );
+
     Ok(Location {
         latitude: response.lat,
         longitude: response.lon,

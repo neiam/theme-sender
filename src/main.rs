@@ -430,7 +430,10 @@ async fn mqtt_listener(
             }
 
             if connection_lost {
-                error!("Connection lost, reconnecting in {} seconds...", reconnect_delay);
+                error!(
+                    "Connection lost, reconnecting in {} seconds...",
+                    reconnect_delay
+                );
                 std::thread::sleep(StdDuration::from_secs(reconnect_delay));
                 reconnect_delay = (reconnect_delay * 2).min(MAX_RECONNECT_DELAY);
                 continue;
@@ -463,12 +466,12 @@ async fn send_theme_update(args: &ThemeMqttArgs, theme: &ThemeType) -> Result<()
     debug!("Theme payload: {:?}", payload);
 
     let payload_json = serde_json::to_string(&payload)?;
-    
+
     // Retry logic with exponential backoff
     let mut retry_delay = 1u64;
     const MAX_RETRY_DELAY: u64 = 30;
     const MAX_RETRIES: u32 = 5;
-    
+
     for attempt in 1..=MAX_RETRIES {
         match try_send_mqtt(args, &payload_json, attempt).await {
             Ok(()) => {
@@ -485,18 +488,23 @@ async fn send_theme_update(args: &ThemeMqttArgs, theme: &ThemeType) -> Result<()
                 retry_delay = (retry_delay * 2).min(MAX_RETRY_DELAY);
             }
             Err(e) => {
-                error!("Failed to send theme update after {} attempts: {}", MAX_RETRIES, e);
+                error!(
+                    "Failed to send theme update after {} attempts: {}",
+                    MAX_RETRIES, e
+                );
                 return Err(e);
             }
         }
     }
-    
-    Err(anyhow::anyhow!("Failed to send theme update after all retries"))
+
+    Err(anyhow::anyhow!(
+        "Failed to send theme update after all retries"
+    ))
 }
 
 async fn try_send_mqtt(args: &ThemeMqttArgs, payload_json: &str, attempt: u32) -> Result<()> {
     debug!("Attempting to send MQTT message (attempt {})", attempt);
-    
+
     // Create MQTT client
     let create_opts = paho_mqtt::CreateOptionsBuilder::new()
         .server_uri(&args.mqtt_host)

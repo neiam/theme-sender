@@ -1,0 +1,48 @@
+version: '3.8'
+
+services:
+  theme-sender:
+    image: ghcr.io/YOUR_USERNAME/theme-sender:latest
+    container_name: theme-sender
+    restart: unless-stopped
+    environment:
+      # MQTT Configuration
+      MQTT_HOST: tcp://mqtt-broker:1883
+      MQTT_USERNAME: ${MQTT_USERNAME:-}
+      MQTT_PASSWORD: ${MQTT_PASSWORD:-}
+      MQTT_TOPIC: neiam/sync/theme
+      MQTT_OVERRIDE_TOPIC: neiam/sync/theme/override
+      MQTT_REVERT_TOPIC: neiam/sync/theme/revert
+      
+      # Publishing interval (seconds)
+      PUBLISH_INTERVAL_SECS: 300
+      
+      # Logging
+      RUST_LOG: info
+    networks:
+      - mqtt-network
+    depends_on:
+      - mqtt-broker
+
+  # Example MQTT broker (mosquitto)
+  mqtt-broker:
+    image: eclipse-mosquitto:2
+    container_name: mqtt-broker
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    volumes:
+      - mosquitto-data:/mosquitto/data
+      - mosquitto-logs:/mosquitto/log
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    networks:
+      - mqtt-network
+
+networks:
+  mqtt-network:
+    driver: bridge
+
+volumes:
+  mosquitto-data:
+  mosquitto-logs:

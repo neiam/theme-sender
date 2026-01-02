@@ -59,7 +59,7 @@ async fn main() -> Result<()> {
         let date = now.date_naive();
         let solar_day = SolarDay::new(coordinates, date);
 
-        let mut events = vec![
+        let mut events = [
             (
                 ThemeType::AstronomicalDawn,
                 solar_day.event_time(SolarEvent::Dawn(DawnType::Astronomical)),
@@ -111,7 +111,7 @@ async fn main() -> Result<()> {
 
     let mut custom_override: Option<String> = None;
     let mut last_solar_theme: Option<ThemeType> = None;
-    let mut immediate_check = false; // Flag to skip sleep and check immediately
+    let _immediate_check = false; // Flag to skip sleep and check immediately
 
     loop {
         debug!("Starting new publish cycle");
@@ -238,16 +238,15 @@ async fn main() -> Result<()> {
         debug!("Current solar theme: {:?}", solar_theme);
 
         // Check if solar theme has changed (which would clear the override)
-        if custom_override.is_some() {
-            if let Some(ref last_solar) = last_solar_theme {
-                if last_solar != &solar_theme {
-                    info!(
-                        "☀️  Solar theme changed from {:?} to {:?}, clearing custom override",
-                        last_solar, solar_theme
-                    );
-                    custom_override = None;
-                }
-            }
+        if custom_override.is_some()
+            && let Some(ref last_solar) = last_solar_theme
+            && last_solar != &solar_theme
+        {
+            info!(
+                "☀️  Solar theme changed from {:?} to {:?}, clearing custom override",
+                last_solar, solar_theme
+            );
+            custom_override = None;
         }
 
         // Update last solar theme
